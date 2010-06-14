@@ -17,6 +17,7 @@ class MysqlSession < AbstractSession
     def find_session(session_id)
       connection = session_connection
       connection.query_with_result = true
+      session_id = connection.escape_string(session_id)
       result = connection.query("SELECT id, data FROM sessions WHERE `session_id`='#{session_id}' LIMIT 1")
       my_session = nil
       # each is used below, as other methods barf on my 64bit linux machine
@@ -31,11 +32,23 @@ class MysqlSession < AbstractSession
 
     # create a new session with given +session_id+ and +data+
     # and save it immediately to the database
-    def create_session(session_id, data={})      
+    def create_session(session_id, data={})
       new_session = new(session_id, data)
       if @@eager_session_creation
         connection = session_connection
-        connection.query("INSERT INTO sessions (`created_at`, `updated_at`, `session_id`, `data`) VALUES (NOW(), NOW(), '#{session_id}', '#{Mysql::quote(AbstractSession.marshalize(data))}')")
+
+        insert_columns = native_columns.inject(['`created_at`', '`updated_at`', '`session_id`', '`data`']) do |result, column|
+          result << "`#{connection.escape_string(column.to_s)}`" if data[column]
+          result
+        end
+
+        insert_values = native_columns.inject(['NOW()', 'NOW()', "'#{connection.escape_string(@session_id)}'", "'#{Mysql::quote(AbstractSession.marshalize(data))}'"]) do |result, column|
+          result << "'#{data[column] ? connection.escape_string(data[column].to_s) : data[column]}'" if data[column]
+          result
+        end
+
+        connection.query("INSERT INTO sessions (#{insert_columns.join(', ')}) VALUES (#{insert_values.join(', ')})")
+
         new_session.id = connection.insert_id
       end
       new_session
@@ -45,7 +58,7 @@ class MysqlSession < AbstractSession
     # caller's responsibility to pass a valid sql condition
     def delete_all(condition=nil)
       if condition
-        session_connection.query("DELETE FROM sessions WHERE #{condition}")
+        session_connection.query("DELETE FROM sessions WHERE #{session_connection.escape_string(condition)}")
       else
         session_connection.query("DELETE FROM sessions")
       end
@@ -61,11 +74,28 @@ class MysqlSession < AbstractSession
     if @id
       # if @id is not nil, this is a session already stored in the database
       # update the relevant field using @id as key
-      connection.query("UPDATE sessions SET `updated_at`=NOW(), `data`='#{Mysql::quote(AbstractSession.marshalize(data))}' WHERE id=#{@id}")
+
+      update_data = native_columns.inject(["`updated_at`=NOW()", "`data`='#{Mysql::quote(AbstractSession.marshalize(data))}'"]) do |result, column|
+        result << "`#{connection.escape_string(column.to_s)}` = '#{connection.escape_string(data[column].to_s)}'" if data[column]
+        result
+      end
+
+      connection.query("UPDATE sessions SET #{update_data.join(', ')} WHERE id=#{@id}")
     else
       # if @id is nil, we need to create a new session in the database
-      # and set @id to the primary key of the inserted record     
-      connection.query("INSERT INTO sessions (`created_at`, `updated_at`, `session_id`, `data`) VALUES (NOW(), NOW(), '#{@session_id}', '#{Mysql::quote(AbstractSession.marshalize(data))}')")
+      # and set @id to the primary key of the inserted record
+
+      insert_columns = native_columns.inject(['`created_at`', '`updated_at`', '`session_id`', '`data`']) do |result, column|
+        result << "`#{connection.escape_string(column.to_s)}`" if data[column]
+        result
+      end
+
+      insert_values = native_columns.inject(['NOW()', 'NOW()', "'#{@session_id}'", "'#{Mysql::quote(AbstractSession.marshalize(data))}'"]) do |result, column|
+        result << "'#{data[column] ? connection.escape_string(data[column].to_s) : data[column]}'" if data[column]
+        result
+      end
+
+      connection.query("INSERT INTO sessions (#{insert_columns.join(', ')}) VALUES (#{insert_values.join(', ')})")
       @id = connection.insert_id
     end
   end
