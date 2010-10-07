@@ -80,7 +80,7 @@ class MysqlSession < AbstractSession
         result
       end
 
-      connection.query("UPDATE sessions SET #{update_data.join(', ')} WHERE id=#{@id}")
+      connection.query("UPDATE sessions SET #{update_data.join(', ')} WHERE id=#{connection.escape_string(@id})")
     else
       # if @id is nil, we need to create a new session in the database
       # and set @id to the primary key of the inserted record
@@ -90,7 +90,7 @@ class MysqlSession < AbstractSession
         result
       end
 
-      insert_values = native_columns.inject(['NOW()', 'NOW()', "'#{@session_id}'", "'#{Mysql::quote(AbstractSession.marshalize(data))}'"]) do |result, column|
+      insert_values = native_columns.inject(['NOW()', 'NOW()', "'#{connection.escape_string(@session_id)}'", "'#{Mysql::quote(AbstractSession.marshalize(data))}'"]) do |result, column|
         result << "'#{data[column] ? connection.escape_string(data[column].to_s) : data[column]}'" if data[column]
         result
       end
@@ -102,7 +102,7 @@ class MysqlSession < AbstractSession
 
   # destroy the current session
   def destroy
-    self.class.delete_all("session_id='#{session_id}'")
+    self.class.delete_all("session_id='#{connection.escape_string(@session_id)}'")
   end
 
 end
